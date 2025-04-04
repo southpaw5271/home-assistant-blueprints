@@ -1,0 +1,104 @@
+blueprint:
+  name: Aqara Water Leak Sensor Alert System
+  description: Sends notifications to your iPhone when water leaks are detected and when battery levels are low on your Aqara water leak sensors connected via ZHA.
+  domain: automation
+  input:
+    leak_sensor:
+      name: Water Leak Sensor
+      description: Select the Aqara water leak sensor to monitor
+      selector:
+        entity:
+          domain: binary_sensor
+          integration: zha
+          device_class: moisture
+    battery_sensor:
+      name: Battery Sensor
+      description: Select the battery sensor for your water leak detector
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
+    notify_device:
+      name: Notification Device
+      description: Select your iPhone or iOS device to notify
+      selector:
+        device:
+          integration: mobile_app
+    battery_threshold:
+      name: Low Battery Threshold
+      description: Battery percentage threshold for low battery notification
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 40
+          unit_of_measurement: "%"
+          mode: slider
+          step: 5
+    battery_repeat_hours:
+      name: Battery Alert Repeat Time
+      description: Hours to wait before sending another low battery alert
+      default: 24
+      selector:
+        number:
+          min: 1
+          max: 72
+          unit_of_measurement: hours
+          mode: box
+          step: 1
+
+trigger:
+  - platform: state
+    entity_id: !input leak_sensor
+    to: "on"
+    id: water_detected
+  - platform: numeric_state
+    entity_id: !input battery_sensor
+    below: !input battery_threshold
+    id: low_battery
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: water_detected
+        sequence:
+          - service: notify.mobile_app_{{ device_attr(device_id(input_notify_device), 'name')|lower|replace(' ', '_') }}
+            data:
+              title: "⚠️ Water Leak Detected!"
+              message: "Water leak detected by {{ state_attr(trigger.entity_id, 'friendly_name') }} sensor!"
+              data:
+                push:
+                  sound:
+                    name: default
+                    critical: 1
+                    volume: 1.0
+                  interruption-level: critical
+                tag: "water_leak_{{trigger.entity_id}}"
+                group: "water_leak_alerts"
+                color: "#ff0000"
+      - conditions:
+          - condition: trigger
+            id: low_battery
+        sequence:
+          - service: notify.mobile_app_{{ device_attr(device_id(input_notify_device), 'name')|lower|replace(' ', '_') }}
+            data:
+              title: "🔋 Low Battery"
+              message: "{{ state_attr(trigger.entity_id, 'friendly_name') }} water leak sensor battery is at {{ states(trigger.entity_id) }}%"
+              data:
+                push:
+                  sound:
+                    name: default
+                  interruption-level: passive
+                tag: "low_battery_{{trigger.entity_id}}"
+                group: "battery_alerts"
+                color: "#ffa500"
+  - if:
+      - condition: trigger
+        id: water_detected
+    then:
+      - service: persistent_notification.create
+        data:
+          title: "Water Leak Detected"
+          message: "Water leak detected by {{ state_attr(trigger.entity_id, 'friendly_name') }} at {{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+          notification_id: "water_leak_{{ trigger.entity_id.split('.')[1] }}"
